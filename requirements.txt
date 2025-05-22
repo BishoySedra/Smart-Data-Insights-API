@@ -1,0 +1,17 @@
+httpx
+pyngrok
+fastapi
+uvicorn
+nest_asyncio
+pandas
+py-AutoClean
+matplotlib
+seaborn
+nltk
+numpy
+pydantic
+cloudinary
+prophet
+scikit-learn
+joblib
+python-dotenv

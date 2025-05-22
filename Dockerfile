@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     git \
     curl \
-    && apt-get clean
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -30,4 +30,4 @@ RUN python -m nltk.downloader punkt stopwords wordnet averaged_perceptron_tagger
 EXPOSE 8000
 
 # Run the app
-CMD ["python", "main.py"]
+CMD ["gunicorn", "main:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "4", "--bind", "0.0.0.0:8000"]

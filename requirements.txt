@@ -1,6 +1,6 @@
 httpx
 pyngrok
-fastapi
+fastapi[standard]
 uvicorn
 nest_asyncio
 pandas

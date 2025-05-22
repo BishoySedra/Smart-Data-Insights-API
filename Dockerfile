@@ -30,4 +30,4 @@ RUN python -m nltk.downloader punkt stopwords wordnet averaged_perceptron_tagger
 EXPOSE 8000
 
 # Run the app
-CMD ["gunicorn", "main:app", "-k", "uvicorn.workers.UvicornWorker", "--workers", "4", "--bind", "0.0.0.0:8000"]
+CMD ["fastapi", "run", "main.py", "--port", "80"]

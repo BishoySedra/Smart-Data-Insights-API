@@ -59,9 +59,9 @@ nest_asyncio.apply()
 app = FastAPI()
 
 cloudinary.config(
-    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
-    api_key=os.getenv("CLOUDINARY_API_KEY"),
-    api_secret=os.getenv("CLOUDINARY_API_SECRET")
+    cloud_name="dwd6kau8a",
+    api_key="414118375842875",
+    api_secret="99IAqTayxvBkd2aC5DVY1kj1jR0"
 )
 
 # CORS middleware configuration
@@ -302,7 +302,6 @@ def plot_top_numerical_insights_ecommerce(df):
             #     plt.title(f"Top 10 Values of {column}")
             #     plt.xlabel(column)
             #     plt.ylabel("Count")
-            #     plot_type = "bar_chart"
             # else:  # Discrete numeric values -> histogram
             sns.histplot(df[column], kde=True, color=DARK_COLORS[0], bins=filter_number, label=generate_numerical_insights_ecommerce(df, column))
             plt.xlabel(column)
@@ -1227,16 +1226,356 @@ def predict_review(request: ReviewRequest):
         'sarcasm_detected': is_sarcastic
     }
 
+@app.post("/chart-data")
+async def extract_chart_data(csv_request: insightsRequest):
+    try:
+        # Download and process CSV like in analyze-data endpoint
+        async with httpx.AsyncClient() as client:
+            response = await client.get(csv_request.cloudinary_url)
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Failed to download CSV from Cloudinary URL"
+                )
+
+        content = response.content
+        encodings_to_try = ['latin-1', 'utf-8', 'iso-8859-1', 'cp1252']
+        data = None
+
+        for encoding in encodings_to_try:
+            try:
+                data = pd.read_csv(io.StringIO(content.decode(encoding)))
+                break
+            except UnicodeDecodeError:
+                continue
+            except Exception:
+                continue
+
+        if data is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not read CSV file with any supported encoding"
+            )
+
+        cleaned_data = AutoClean(
+            data,
+            mode = 'manual',
+            missing_num="auto",
+            missing_categ='auto',
+            outliers='auto',
+            duplicates = 'auto',
+            extract_datetime = 's'
+        )
+
+        df_cleaned = cleaned_data.output
+        domainType = csv_request.domainType
+
+        # Extract data for different chart types
+        chart_data = {
+            "bar_graph": extract_bar_graph_data(df_cleaned),
+            "pie_chart": extract_pie_chart_data(df_cleaned),
+            "correlation": extract_correlation_data(df_cleaned),
+            "histogram": extract_histogram_data(df_cleaned),
+            "kde": extract_kde_data(df_cleaned),
+            "forecast": extract_forecast_data(df_cleaned, domainType)
+        }
+
+        return {
+            "message": "Data extraction completed successfully",
+            "chart_data": chart_data
+        }
+
+    except Exception as e:
+        print(f"Error processing file: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }
+        )
+
+def extract_bar_graph_data(df):
+    """Extract data for bar graphs without rendering"""
+    result = []
+    categorical_columns = df.select_dtypes(include=['object']).columns
+    categorical_columns = [col for col in categorical_columns if not is_likely_id_column(df, col)]
+
+    for column in categorical_columns:
+        # Get at least 20 categories (or all if there are fewer)
+        max_categories = min(20, df[column].nunique())
+        category_counts = df[column].value_counts().nlargest(max_categories)
+
+        # Calculate percentages and additional metrics
+        total_values = len(df)
+        unique_values = df[column].nunique()
+        top_category = category_counts.index[0]
+        top_category_count = category_counts.values[0]
+        top_category_percentage = (top_category_count / total_values) * 100
+
+        # Calculate percentages for all categories
+        percentages = [(count / total_values) * 100 for count in category_counts.values]
+
+        result.append({
+            "column": column,
+            "categories": category_counts.index.tolist(),
+            "values": category_counts.values.tolist(),
+            "percentages": percentages,
+            "total_values": total_values,
+            "unique_values": unique_values,
+            "top_category": top_category,
+            "top_category_count": int(top_category_count),
+            "top_category_percentage": top_category_percentage,
+            "insights": generate_dynamic_categorical_insights(df, column)
+        })
+
+    return result
+
+def extract_pie_chart_data(df):
+    """Extract data for pie charts without rendering"""
+    result = []
+    categorical_columns = df.select_dtypes(include=['object']).columns
+    categorical_columns = [col for col in categorical_columns if not is_likely_id_column(df, col)]
+
+    for column in categorical_columns:
+        if df[column].nunique() <= 5:  # Use pie chart for categories with few unique values
+            category_counts = df[column].value_counts()
+            result.append({
+                "column": column,
+                "categories": category_counts.index.tolist(),
+                "values": category_counts.values.tolist(),
+                "insights": generate_dynamic_categorical_insights(df, column)
+            })
+
+    return result
+
+def extract_histogram_data(df):
+    """Extract data for histograms without rendering"""
+    result = []
+    numerical_columns = df.select_dtypes(include=['int64', 'float64']).columns
+    filtered_numerical_columns = [col for col in numerical_columns if df[col].nunique() / len(df) < 0.9]
+    filter_numbers = [5, 10, 15, 20]  # Different bin sizes for filtering
+
+    for column in filtered_numerical_columns:
+        for filter_number in filter_numbers:
+            # Calculate histogram data with different bin sizes
+            hist, bin_edges = np.histogram(df[column].dropna(), bins=filter_number)
+
+            result.append({
+                "column": column,
+                "bins": bin_edges.tolist(),
+                "frequencies": hist.tolist(),
+                "filterNumber": filter_number,  # Add filter number for frontend filtering
+                "stats": {
+                    "mean": df[column].mean(),
+                    "median": df[column].median(),
+                    "std": df[column].std(),
+                    "skewness": df[column].skew(),
+                    "kurtosis": df[column].kurtosis()
+                },
+                "insights": generate_numerical_insights_ecommerce(df, column)
+            })
+
+    return result
+
+def extract_kde_data(df):
+    """Extract data for KDE plots without rendering"""
+    numerical_cols = [col for col in df.select_dtypes(include=[np.number]).columns if not is_id_column(df, col)]
+    result = []
+
+    for col in numerical_cols:
+        # Get KDE estimation points (100 points)
+        x = np.linspace(df[col].min(), df[col].max(), 100)
+        kde = sns.kdeplot(df[col]).get_lines()[0].get_data()
+
+        # Clear the plot to avoid memory issues
+        plt.clf()
+        plt.close()
+
+        variance = np.var(df[col])
+        std_dev = np.std(df[col])
+        mean_value = df[col].mean()
+
+        result.append({
+            "column": col,
+            "x_values": kde[0].tolist(),
+            "y_values": kde[1].tolist(),
+            "stats": {
+                "mean": mean_value,
+                "variance": variance,
+                "std_dev": std_dev
+            }
+        })
+
+    return result
+
+def extract_correlation_data(df):
+    """Extract data for correlation matrix without rendering"""
+    numerical_df = df.select_dtypes(include=[np.number])
+    corr_matrix = numerical_df.corr()
+
+    # Convert to list format for frontend
+    columns = corr_matrix.columns.tolist()
+    correlation_data = []
+
+    for i, col1 in enumerate(columns):
+        for j, col2 in enumerate(columns):
+            if i <= j:  # Only include upper triangle and diagonal
+                correlation_data.append({
+                    "x": col1,
+                    "y": col2,
+                    "correlation": corr_matrix.loc[col1, col2]
+                })
+
+    return {
+        "columns": columns,
+        "data": correlation_data
+    }
+
+def extract_forecast_data(df, domain_type):
+    """Extract data for forecasting without rendering"""
+    result = []
+
+    # Try to identify date column
+    date_columns = df.select_dtypes(include=['datetime64']).columns
+    if len(date_columns) > 0:
+        date_column = date_columns[0]
+    else:
+        # Look for potential date columns with year, month, day
+        if all(col in df.columns for col in ['Year', 'Month', 'Day']):
+            df['Date'] = pd.to_datetime(df[['Year', 'Month', 'Day']])
+            date_column = 'Date'
+        else:
+            # Try to find date-like columns and convert
+            date_column = None
+            for col in df.columns:
+                if df[col].dtype == 'object':
+                    try:
+                        df[f'{col}_date'] = pd.to_datetime(df[col])
+                        date_column = f'{col}_date'
+                        break
+                    except:
+                        continue
+            
+            # No date column found, create artificial dates
+            if date_column is None:
+                df['artificial_date'] = pd.date_range(start='2022-01-01', periods=len(df), freq='D')
+                date_column = 'artificial_date'
+
+    # Identify numerical columns for forecasting
+    if domain_type == 'ecommerce':
+        keywords = ["sales", "profit", "revenue", "income", "return", "proceeds", "earnings"]
+        target_cols = [col for col in df.columns if any(keyword in col.lower() for keyword in keywords)]
+    else:
+        # For education data, use any numerical columns with not too many unique values
+        target_cols = [col for col in df.select_dtypes(include=[np.number]).columns
+                    if df[col].nunique() < len(df) * 0.5]
+
+    # If no suitable columns found, use the first few numerical columns
+    if not target_cols and len(df.select_dtypes(include=[np.number]).columns) > 0:
+        target_cols = df.select_dtypes(include=[np.number]).columns[:3].tolist()
+
+    # If still no target columns, return empty result to avoid frontend errors
+    if not target_cols:
+        return result
+
+    # Generate forecasts for each target column
+    for col in target_cols:
+        # Ensure we have a valid date column
+        if date_column not in df.columns:
+            # Add a placeholder forecast with empty arrays to avoid frontend errors
+            result.append({
+                "column": col,
+                "dates": [],
+                "historical_values": [],
+                "forecast_dates": [],
+                "forecast_values": [],
+                "forecast_lower": [],
+                "forecast_upper": []
+            })
+            continue
+
+        # Aggregate data (e.g., daily or monthly)
+        try:
+            # Group by date and calculate mean
+            time_series_df = df.groupby(pd.Grouper(key=date_column, freq='M'))[col].mean().reset_index()
+            
+            # Skip if we have too few data points
+            if len(time_series_df) < 3:
+                result.append({
+                    "column": col,
+                    "dates": [],
+                    "historical_values": [],
+                    "forecast_dates": [],
+                    "forecast_values": [],
+                    "forecast_lower": [],
+                    "forecast_upper": []
+                })
+                continue
+
+            # Rename columns for Prophet
+            data = time_series_df.rename(columns={date_column: 'ds', col: 'y'})
+            
+            # Ensure data is not empty and has valid values
+            data = data.dropna()
+            if len(data) < 3:
+                result.append({
+                    "column": col,
+                    "dates": [],
+                    "historical_values": [],
+                    "forecast_dates": [],
+                    "forecast_values": [],
+                    "forecast_lower": [],
+                    "forecast_upper": []
+                })
+                continue
+
+            # Train Prophet model
+            model = Prophet()
+            model.fit(data)
+
+            # Create future dataframe for 24 periods ahead (maximum filter available in the frontend)
+            future = model.make_future_dataframe(periods=24, freq='M')
+            forecast = model.predict(future)
+
+            # Extract relevant data for frontend
+            result.append({
+                "column": col,
+                "dates": data['ds'].dt.strftime('%Y-%m-%d').tolist(),
+                "historical_values": data['y'].tolist(),
+                "forecast_dates": forecast['ds'].dt.strftime('%Y-%m-%d').tolist(),
+                "forecast_values": forecast['yhat'].tolist(),
+                "forecast_lower": forecast['yhat_lower'].tolist(),
+                "forecast_upper": forecast['yhat_upper'].tolist()
+            })
+        except Exception as e:
+            print(f"Error generating forecast for {col}: {str(e)}")
+            # Add placeholder data to avoid frontend errors
+            result.append({
+                "column": col,
+                "dates": [],
+                "historical_values": [],
+                "forecast_dates": [],
+                "forecast_values": [],
+                "forecast_lower": [],
+                "forecast_upper": []
+            })
+            continue
+
+    return result
+
 # Setup ngrok
-ngrok.set_auth_token(os.getenv("NGROK_AUTH_TOKEN"))
+ngrok.set_auth_token("2swgwcEJ5hsXEst7a5WBLtv58s8_5FtZDTirtSBKrSL4e8HUR")  # Replace with your ngrok auth token
 
 # Run the FastAPI app
 if __name__ == "__main__":
-    uvicorn.run(
-        "main:app",  # 👈 point to the actual module and variable, not "__main__"
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)),  # 👈 allow dynamic port via environment variable
-        workers=4,  # 👈 enable multi-worker for concurrency
-        reload=False,  # 👈 never use reload in production
-        access_log=True  # 👈 log requests in production
-    )
+  public_url = ngrok.connect(8000, bind_tls=True).public_url
+  print(f"FastAPI is publicly accessible at: {public_url}")
+  uvicorn.run(
+      "__main__:app",
+      host="0.0.0.0",
+      port=8000,
+      log_config=None,  # Disable Uvicorn's default logging
+      access_log=False  # Disable access logs
+  )

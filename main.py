@@ -59,9 +59,9 @@ nest_asyncio.apply()
 app = FastAPI()
 
 cloudinary.config(
-    cloud_name="dwd6kau8a",
-    api_key="414118375842875",
-    api_secret="99IAqTayxvBkd2aC5DVY1kj1jR0"
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET")
 )
 
 # CORS middleware configuration
@@ -1566,16 +1566,15 @@ def extract_forecast_data(df, domain_type):
     return result
 
 # Setup ngrok
-ngrok.set_auth_token("2swgwcEJ5hsXEst7a5WBLtv58s8_5FtZDTirtSBKrSL4e8HUR")  # Replace with your ngrok auth token
+ngrok.set_auth_token(os.getenv("NGROK_AUTH_TOKEN"))
 
 # Run the FastAPI app
 if __name__ == "__main__":
-  public_url = ngrok.connect(8000, bind_tls=True).public_url
-  print(f"FastAPI is publicly accessible at: {public_url}")
-  uvicorn.run(
-      "__main__:app",
-      host="0.0.0.0",
-      port=8000,
-      log_config=None,  # Disable Uvicorn's default logging
-      access_log=False  # Disable access logs
-  )
+    uvicorn.run(
+        "main:app",  # 👈 point to the actual module and variable, not "__main__"
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8000)),  # 👈 allow dynamic port via environment variableAdd commentMore actions
+        workers=4,  # 👈 enable multi-worker for concurrency
+        reload=False,  # 👈 never use reload in production
+        access_log=True  # 👈 log requests in production
+    )
